@@ -814,6 +814,9 @@ class ModuleManager(QObject):
         if ri != self.last_finished_index:
             self.last_finished_index = ri
             self.page_trans_finished.emit(ri)
+            # keys_list = list(self.pages_to_process.keys())
+            # key_at_index = keys_list[ri]
+            # self.page_trans_finished.emit(key_arit_index)
         if progress == 100:
             self.finishImgtransPipeline()
 

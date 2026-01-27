@@ -1,6 +1,6 @@
 import os.path as osp
 import os, re, traceback, sys
-from typing import List, Union
+from typing import List, Union, Dict
 from pathlib import Path
 import subprocess
 from functools import partial
@@ -42,18 +42,39 @@ from .custom_widget import MessageBox, FrameLessMessageBox, ImgtransProgressMess
 class PageListView(QListWidget):
 
     reveal_file = Signal()
+    run_selected_act = Signal(list)
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.setIconSize(QSize(shared.PAGELIST_THUMBNAIL_SIZE, shared.PAGELIST_THUMBNAIL_SIZE))
+        self.setSelectionMode(QListWidget.ExtendedSelection)
 
     def contextMenuEvent(self, e: QContextMenuEvent):
         menu = QMenu()
-        reveal_act = menu.addAction(self.tr('Reveal in File Explorer'))
-        rst = menu.exec_(e.globalPos())
 
-        if rst == reveal_act:
-            self.reveal_file.emit()
+        # Get selected items
+        selected_items = self.selectedItems()
+
+        if len(selected_items) == 1:
+            # Single file selected
+            reveal_act = menu.addAction(self.tr('Reveal in File Explorer'))
+            menu.addSeparator()
+            run_selected_act = menu.addAction(self.tr(f'Run {len(selected_items)} files'))
+            
+            rst = menu.exec_(e.globalPos())
+        
+            if rst == reveal_act:
+                self.reveal_file.emit()
+            elif rst ==  run_selected_act:
+                self.run_selected_act.emit(selected_items)
+        else:
+            # Multiple files selected
+            run_selected_act = menu.addAction(self.tr(f'Run {len(selected_items)} files'))
+
+            rst = menu.exec_(e.globalPos())
+            
+            if rst ==  run_selected_act:
+                self.run_selected_act.emit(selected_items)
 
         return super().contextMenuEvent(e)
 
@@ -153,6 +174,7 @@ class MainWindow(mainwindow_cls):
 
         self.pageList = PageListView()
         self.pageList.reveal_file.connect(self.on_reveal_file)
+        self.pageList.run_selected_act.connect(self.on_run_selected) 
         self.pageList.setHidden(True)
         self.pageList.currentItemChanged.connect(self.pageListCurrentItemChanged)
 
@@ -1303,8 +1325,12 @@ class MainWindow(mainwindow_cls):
             if pcfg.let_uppercase_flag:
                 blk.translation = blk.translation.upper()
 
-    def on_pagtrans_finished(self, page_index: int):
-        blk_list = self.imgtrans_proj.get_blklist_byidx(page_index)
+    def on_pagtrans_finished(self, page_index: str):
+        # keys_list = list(self.imgtrans_proj.pages.keys())
+        # page_index = keys_list.index(page)
+        # blk_list = self.imgtrans_proj.pages[page_index]
+        blk_list = list(self.imgtrans_proj.pages.values())[page_index]
+        # blk_list = self.imgtrans_proj.get_blklist_byidx(page_index)
         ffmt_list = None
         if len(self.backup_blkstyles) == self.imgtrans_proj.num_pages and len(self.backup_blkstyles[page_index]) == len(blk_list):
             ffmt_list: List[FontFormat] = self.backup_blkstyles[page_index]
@@ -1437,8 +1463,8 @@ class MainWindow(mainwindow_cls):
             pcfg.display_lang = lang
             self.set_display_lang(lang)
     
-    def run_imgtrans(self):
-        if not self.imgtrans_proj.is_all_pages_no_text and not pcfg.module.keep_exist_textlines:
+    def run_imgtrans(self, pages: Dict[str, List[TextBlock]]):
+        if pages is None and not self.imgtrans_proj.is_all_pages_no_text and not pcfg.module.keep_exist_textlines:
             # 创建自定义消息框，添加"继续运行"选项
             msgBox = QMessageBox(self)
             msgBox.setIcon(QMessageBox.Question)
@@ -1458,16 +1484,16 @@ class MainWindow(mainwindow_cls):
                 return  # 取消，不执行任何操作
             elif clicked_button == continue_btn:
                 # 继续运行：只处理没有文本的页面
-                self.on_run_imgtrans(continue_mode=True)
+                self.on_run_imgtrans(pages, continue_mode=True)
                 return
             # 如果是 restart_btn，继续执行下面的代码（重新运行）
-        self.on_run_imgtrans()
+        self.on_run_imgtrans(pages)
 
     def run_imgtrans_wo_textstyle_update(self):
         self._run_imgtrans_wo_textstyle_update = True
         self.run_imgtrans()
 
-    def on_run_imgtrans(self, continue_mode=False):
+    def on_run_imgtrans(self, pages: Dict[str, List[TextBlock]], continue_mode=False):
         self.backup_blkstyles.clear()
 
         if self.bottomBar.textblockChecker.isChecked():
@@ -1480,17 +1506,18 @@ class MainWindow(mainwindow_cls):
         
         # 继续模式：先检查哪些页面需要处理
         if continue_mode:
-            for page_name in self.imgtrans_proj.pages:
+            for page in pages:
                 if not self.imgtrans_proj.get_page_progress(page_name):
                     pages_to_process.append(page_name)
             if len(pages_to_process) == 0:
                 return
         else:
-            for page_name in self.imgtrans_proj.pages:
-                self.imgtrans_proj.set_page_progress(page_name, 0)
+            for page in pages:
+                self.imgtrans_proj.set_page_progress(page, 0)
+                pages_to_process.append(page)
         
         if pcfg.module.enable_detect:
-            for page in self.imgtrans_proj.pages:
+            for page in pages:
                 if not pcfg.module.keep_exist_textlines:
                     if not pages_to_process:
                         # 没有指定pages_to_process，清空所有页面
@@ -1519,7 +1546,7 @@ class MainWindow(mainwindow_cls):
                     textblk.vertical = textblk.src_is_vertical
         
         # 如果有指定pages_to_process或者是continue_mode，则传递页面列表
-        self.module_manager.runImgtransPipeline(pages_to_process if (pages_to_process or continue_mode) else None)
+        self.module_manager.runImgtransPipeline(pages_to_process if (pages_to_process or continue_mode) else pages)
 
     def on_transpanel_changed(self):
         self.canvas.editor_index = self.rightComicTransStackPanel.currentIndex()
@@ -1834,3 +1861,12 @@ class MainWindow(mainwindow_cls):
         action: QAction = d['action']
         action.setChecked(False)
         setattr(pcfg, cfg_name, False)
+
+    def on_run_selected(self, items: list):
+        """Handling launch on multiple files"""
+        pages: Dict[str, List[TextBlock]] = {}
+        items_converted = [i.text() for i in items]
+        for page in self.imgtrans_proj.pages:
+            if (page in items_converted):
+                pages[page] =  self.imgtrans_proj.pages[page]
+        self.run_imgtrans(pages)

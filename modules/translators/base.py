@@ -1,6 +1,6 @@
 import urllib.request
 from ordered_set import OrderedSet
-from typing import Dict, List, Union, Set, Callable
+from typing import Dict, List, Union, Set, Callable, Optional, Tuple
 import time, requests, re, uuid, base64, hmac, functools, json, copy
 from collections import OrderedDict
 
@@ -10,6 +10,7 @@ from ..base import BaseModule, DEVICE_SELECTOR
 from utils.registry import Registry
 from utils.io_utils import text_is_empty
 from utils.logger import logger as LOGGER
+from utils.text_processing import should_be_uppercase
 
 TRANSLATORS = Registry('translators')
 register_translator = TRANSLATORS.register_module
@@ -137,6 +138,23 @@ class BaseTranslator(BaseModule):
         raise NotImplementedError
 
     def translate(self, text: Union[str, List]) -> Union[str, List]:
+        def get_surrounding_brackets(s: str) -> Optional[Tuple[str, str]]:
+            """Возвращает обрамляющие скобки или None"""
+            if len(s) >= 2:
+                if s[0] == '(' and s[-1] == ')':
+                    return ('(', ')')
+                elif s[0] == '[' and s[-1] == ']':
+                    return ('[', ']')
+            return None
+
+        def wrap_if_needed(original: str, translated: str) -> str:
+            """Добавляет скобки если они были в оригинале и отсутствуют в переводе"""
+            brackets = get_surrounding_brackets(original)
+            if brackets:
+                if not (translated.startswith(brackets[0]) and translated.endswith(brackets[1])):
+                    return f"{brackets[0]}{translated}{brackets[1]}"
+            return translated
+    
         if text_is_empty(text):
             return text
 
@@ -145,6 +163,11 @@ class BaseTranslator(BaseModule):
         text_source = self.textlist2text(text) if concate_text else text
         
         src_is_list = isinstance(text_source, List)
+        
+        # import debugpy
+        # debugpy.debug_this_thread()
+        # debugpy.breakpoint()
+
         if src_is_list: 
             text_trans = self._translate(text_source)
         else:
@@ -165,6 +188,21 @@ class BaseTranslator(BaseModule):
                 LOGGER.error('This translator seems to messed up the translation which resulted in inconsistent translated line count.\n \
                              Set concate_text to False or change textblk_break in the source code may solve the problem.')
                 raise
+
+            for i, t in enumerate(text):
+                if should_be_uppercase(t):
+                    text_trans[i] = text_trans[i].upper()
+                # Добавляем проверку скобок
+                text_trans[i] = wrap_if_needed(t, text_trans[i].replace('\n', ' '))
+                # text_trans[i] = text_trans[i].replace('\n', ' ')
+
+        else:
+            if should_be_uppercase(text):
+                text_trans = text_trans.upper()
+            # text_trans = text_trans.replace('\n', ' ')
+            # Добавляем проверку скобок для единичного текста
+            text_trans = wrap_if_needed(text, text_trans.replace('\n', ' '))
+
 
         return text_trans
 
