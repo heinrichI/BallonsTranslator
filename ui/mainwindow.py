@@ -1500,47 +1500,6 @@ class MainWindow(mainwindow_cls):
         self.resetStyleSheet(reverse_icon=True)
         self.save_config()
 
-    # def SpellCheck(self, text: str, xyxy, img):
-    #     import numpy as np
-
-    #     # Unpack the coordinates
-    #     x1, y1, x2, y2 = xyxy
-    #      # Crop the image using NumPy array slicing
-    #     cropped_img = img[y1:y2, x1:x2]
-
-    #     # Convert NumPy array to QImage
-    #     height, width, channel = cropped_img.shape
-    #     bytes_per_line = width * channel
-
-    #     # Ensure the image data is contiguous in memory
-    #     if not cropped_img.flags['C_CONTIGUOUS']:
-    #         cropped_img = np.ascontiguousarray(cropped_img)
-
-    #     # qimg = QImage(img.data, width, height, bytes_per_line, QImage.Format.Format_ARGB32)
-    #     qimg = QImage(cropped_img.data.tobytes(), width, height, bytes_per_line, QImage.Format.Format_RGB888)
-
-    #     # breakpoint()  # or debugpy.breakpoint()
-    #     # wordsNotFound: int = self.SpellCheckEngine.CountUnknownWordsViaDictionary(text)
-    #     # unknownWords = self.SpellCheckEngine.GetUnknownWordsViaDictionary(text)
-    #     for word in self.SpellCheckEngine.UnknownWords(text):
-    #         suggestions = self.SpellCheckEngine.DoSuggest(word)
-    #         # dialog = SpellCheckEngine(suggestions)
-    #         self.data_updated.emit(text, word, qimg, suggestions)  # Emit the signal
-    #         # self.spellCheckDialog.activateWindow()
-    #         # self.spellCheckDialog.setText(text, img, suggestions)
-    #         result = self.spellCheckDialog.exec()
-    #         if result == QDialog.Accepted:
-    #             LOGGER.debug(f"Dialog state: {self.spellCheckDialog.state}")
-    #             self.SpellCheckEngine.Handle(self.spellCheckDialog)
-    #         else:
-    #             LOGGER.debug("Dialog rejected")
-    #             return None
-
-    #         # if self.spellCheckDialog.exec():
-    #             # Handle the acceptance of the dialog if needed
-
-    #     return self.SpellCheckEngine.fixed_text
-
 
     def ocr_postprocess(self, textblocks: List[TextBlock], img, ocr_module=None, **kwargs):
         for blk in textblocks:

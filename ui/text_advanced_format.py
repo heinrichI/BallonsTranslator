@@ -1,4 +1,4 @@
-from typing import Any, Callable, List
+from typing import Callable, List
 
 from qtpy.QtWidgets import QSizePolicy, QVBoxLayout, QPushButton, QGroupBox, QLabel, QHBoxLayout, QListWidget, QListWidgetItem, QWidget
 from qtpy.QtCore import Signal, Qt
@@ -38,8 +38,8 @@ class TextShadowGroup(QGroupBox):
         self.strength_box.setToolTip(self.tr("Set Shadow Strength"))
         self.strength_box.param_changed.connect(self.on_param_changed)
         self.strength_label = SmallSizeControlLabel(self, direction=1, text=self.tr('Strength'), alignment=Qt.AlignmentFlag.AlignCenter)
-        self.strength_label.size_ctrl_changed.connect(lambda x : self.strength_box.changeByDelta(x, multiplier=0.03))
-        self.strength_label.btn_released.connect(lambda : self.on_param_changed('shadow_strength', self.strength_box.value()))
+        self.strength_label.size_ctrl_changed.connect(lambda x: self.strength_box.changeByDelta(x, multiplier=0.03))
+        self.strength_label.btn_released.connect(lambda: self.on_param_changed('shadow_strength', self.strength_box.value()))
         strength_layout = QHBoxLayout()
         strength_layout.addWidget(self.strength_label)
         strength_layout.addWidget(self.strength_box)
@@ -49,7 +49,7 @@ class TextShadowGroup(QGroupBox):
         self.radius_box.param_changed.connect(self.on_param_changed)
         self.radius_label = SmallSizeControlLabel(self, direction=1, text=self.tr('Radius'), alignment=Qt.AlignmentFlag.AlignCenter)
         self.radius_label.size_ctrl_changed.connect(self.radius_box.changeByDelta)
-        self.radius_label.btn_released.connect(lambda : self.on_param_changed('shadow_radius', self.radius_box.value()))
+        self.radius_label.btn_released.connect(lambda: self.on_param_changed('shadow_radius', self.radius_box.value()))
         radius_layout = QHBoxLayout()
         radius_layout.addWidget(self.radius_label)
         radius_layout.addWidget(self.radius_box)
@@ -103,8 +103,8 @@ class TextGradientGroup(QGroupBox):
         self.angle_box.setToolTip(self.tr("Set Gradient Angle"))
         self.angle_box.param_changed.connect(self.on_param_changed)
         self.angle_label = SmallSizeControlLabel(self, direction=1, text=self.tr('Angle'), alignment=Qt.AlignmentFlag.AlignCenter)
-        self.angle_label.size_ctrl_changed.connect(lambda x : self.angle_box.changeByDelta(x, multiplier=1))
-        self.angle_label.btn_released.connect(lambda : self.on_param_changed('gradient_angle', self.angle_box.value()))
+        self.angle_label.size_ctrl_changed.connect(lambda x: self.angle_box.changeByDelta(x, multiplier=1))
+        self.angle_label.btn_released.connect(lambda: self.on_param_changed('gradient_angle', self.angle_box.value()))
         angle_layout = QHBoxLayout()
         angle_layout.addWidget(self.angle_label)
         angle_layout.addWidget(self.angle_box)
@@ -113,8 +113,8 @@ class TextGradientGroup(QGroupBox):
         self.size_box.setToolTip(self.tr("Set Gradient Size"))
         self.size_box.param_changed.connect(self.on_param_changed)
         self.size_label = SmallSizeControlLabel(self, direction=1, text=self.tr('Size'), alignment=Qt.AlignmentFlag.AlignCenter)
-        self.size_label.size_ctrl_changed.connect(lambda x : self.size_box.changeByDelta(x, multiplier=0.02))
-        self.size_label.btn_released.connect(lambda : self.on_param_changed('gradient_size', self.size_box.value()))
+        self.size_label.size_ctrl_changed.connect(lambda x: self.size_box.changeByDelta(x, multiplier=0.02))
+        self.size_label.btn_released.connect(lambda: self.on_param_changed('gradient_size', self.size_box.value()))
         size_layout = QHBoxLayout()
         size_layout.addWidget(self.size_label)
         size_layout.addWidget(self.size_box)
@@ -123,7 +123,6 @@ class TextGradientGroup(QGroupBox):
         hlayout1.addLayout(start_picker_layout)
         hlayout1.addLayout(end_picker_layout)
         hlayout1.addWidget(self.enable_checker)
-        # hlayout1.addStretch(-1)
 
         hlayout2 = QHBoxLayout()
         hlayout2.addLayout(angle_layout)
@@ -162,12 +161,11 @@ class TextAdvancedFormatPanel(PanelArea):
         self.opacity_box.param_changed.connect(self.on_format_changed)
         self.opacity_label = SmallSizeControlLabel(self, direction=1, text=self.tr('Opacity'), alignment=Qt.AlignmentFlag.AlignCenter)
         self.opacity_label.size_ctrl_changed.connect(self.opacity_box.changeByDelta)
-        self.opacity_label.btn_released.connect(lambda : self.on_format_changed('opacity', self.opacity_box.value()))
+        self.opacity_label.btn_released.connect(lambda: self.on_format_changed('opacity', self.opacity_box.value()))
         opacity_layout = QHBoxLayout()
         opacity_layout.addWidget(self.opacity_label)
         opacity_layout.addWidget(self.opacity_box)
 
-        # self.tate_chu_yoko_checker = QFontChecker()
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self.scrollContent.after_resized.connect(self.adjuset_size)
 
@@ -211,7 +209,7 @@ class TextAdvancedFormatPanel(PanelArea):
         self.gradient_group.enable_checker.setCheckState(font_format.gradient_enabled)
         self.gradient_group.start_picker.setPickerColor(font_format.gradient_start_color)
         self.gradient_group.end_picker.setPickerColor(font_format.gradient_end_color)
-        # self.tate_chu_yoko_checker.setChecked(font_format.font)
+
 
 class WordListItemWidget(QWidget):
     def __init__(self, word: str, callback):
@@ -219,92 +217,42 @@ class WordListItemWidget(QWidget):
         self.word = word
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 0, 5, 0)
-        
+
         self.label = QLabel(word)
         self.button = QPushButton("X")
         self.button.setFixedSize(25, 20)
         self.button.clicked.connect(lambda: callback(word))
-        
+
         layout.addWidget(self.label)
         layout.addStretch()
         layout.addWidget(self.button)
 
-class WordListPanel(PanelArea):
-    """
-    A panel displaying a list of words.
-    Inherits from PanelArea to provide collapsible/expandable functionality.
-    """
 
-    # Signal emitted when a word in the list is selected/clicked
-    # The signal carries the string value of the selected word.
-    # The signal now carries a tuple (selected_word, textblock_obj).
-    word_selected = Signal(str, object)  # Assuming textblock_obj is of type 'object'
+class WordListPanel(PanelArea):
+    """A panel displaying a list of unknown/misspelled words."""
+
+    # Signal emitted when a word is clicked: (word, block_index)
+    word_selected = Signal(str, int)
     wordDeleted = Signal(str)
 
-     # Define the maximum height this panel is allowed to be
-    WORD_LIST_PANEL_MAXH = 210  # Adjust value as needed
-    ITEM_HEIGHT_FALLBACK = 30    # Fallback item height if dynamic calculation fails
+    WORD_LIST_PANEL_MAXH = 210
+    ITEM_HEIGHT_FALLBACK = 30
 
     def __init__(self, panel_name: str, config_name: str, config_expand_name: str):
-        # Initialize the base PanelArea class
-        # This sets up the panel's title bar, collapse state handling, etc.
         super().__init__(panel_name, config_name, config_expand_name)
 
-        # --- UI Elements ---
-
-        # QListWidget is suitable for displaying a list of items
         self.word_list_widget = QListWidget(self)
         self.word_list_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        # Enable sorting for easier navigation (optional)
-        # self.word_list_widget.setSortingEnabled(True)
 
-        # --- Layout ---
-
-        # Create a layout for the content area of the panel
         content_layout = QVBoxLayout()
         content_layout.addWidget(self.word_list_widget)
-        content_layout.setAlignment(Qt.AlignmentFlag.AlignTop) # Align widgets to the top
+        content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # Set the created layout as the content for the scrollable area of the PanelArea
         self.setContentLayout(content_layout)
 
-        # --- Signal Connections ---
-
-        # Connect the QListWidget's itemClicked signal to our internal handler
         self.word_list_widget.itemClicked.connect(self._on_word_clicked)
-        # Alternatively, you could use currentItemChanged for selection changes
-        # regardless of click (e.g., using arrow keys)
-        # self.word_list_widget.currentItemChanged.connect(self._on_current_word_changed)
-
-
-        # Connect to the after_resized signal to adjust panel height
-        # self.scrollContent.after_resized.connect(self._adjust_size)
-
-    # def _adjust_size(self):
-    #     """
-    #     Adjusts the height of the WordListPanel based on content height.
-    #     If content height exceeds the maximum allowed, limit height and enable scrolling.
-    #     If content fits, shrink panel to fit content.
-    #     """
-    #     content_height = self.scrollContent.height()
-    #     desired_height = min(WordListPanel.WORD_LIST_PANEL_MAXH, content_height)
-    #     self.setFixedHeight(desired_height)
 
     def adjust_panel_height(self):
-        # if not self.word_list_widget.verticalScrollBar().isVisible():
-        #     self.setFixedHeight(self.word_list_widget.sizeHintForRow(0) * self.word_list_widget.count())
-        # # Adjust panel height to fit contents if there's no scrollbar
-        # content_height = self.sizeHintForRow(0) * self.count() + 2 * self.frameWidth()
-        # max_height = 200  # Optional: set a max height
-        # self.setMaximumHeight(min(content_height, max_height))
-
-
-        # current_height = self.sizeHint().height()
-        # if current_height < self.min_height:
-        #     self.setFixedHeight(current_height)  # Set to current height if it's less than min
-        # else:
-        #     self.setFixedHeight(self.min_height)  # Set to min height
-
         """
         Adjusts the panel height based on the number of list items.
         Calculates height as number of items × item height (from sizeHintForRow).
@@ -315,73 +263,45 @@ class WordListPanel(PanelArea):
             self.setFixedHeight(0)
             return
 
-        # Estimate height of one item
         item_height = self.word_list_widget.sizeHintForRow(0)
         if item_height <= 0:
             item_height = WordListPanel.ITEM_HEIGHT_FALLBACK
 
         total_height = count * item_height + 30
-
         desired_height = min(WordListPanel.WORD_LIST_PANEL_MAXH, total_height)
         self.setFixedHeight(desired_height)
 
-    def set_words(self, words: List[str]):
+    def set_words(self, words: List):
         """
         Sets the list of words to be displayed in the panel.
-        Clears the current list before adding new words.
+        Each item in *words* is a tuple of (word: str, block_index: int).
         """
-        self.word_list_widget.clear() # Remove all current items
-        for word in words:
-            # self.word_list_widget.addItem(word) # Add each word as a list item
-            text_content, textblock_obj = word # Unpack the tuple
+        self.word_list_widget.clear()
+        for text_content, textblock_obj in words:
             self.add_word_item(text_content, textblock_obj)
-
         self.adjust_panel_height()
-        # self._adjust_size()  # Set initial height based on content
 
-
-    def add_word_item(self, word: str, textblock_obj: object):
+    def add_word_item(self, word: str, textblock_obj: int):
         item = QListWidgetItem()
         widget = WordListItemWidget(word, self.on_delete_clicked)
         item.setSizeHint(widget.sizeHint())
         self.word_list_widget.addItem(item)
         self.word_list_widget.setItemWidget(item, widget)
-
-        # Store the textblock_obj in the item's data for later retrieval
         item.setData(Qt.UserRole, textblock_obj)
 
     def on_delete_clicked(self, word: str):
-        self.wordDeleted.emit(word)  # Make sure this signal is defined   
+        self.wordDeleted.emit(word)
 
     def _on_word_clicked(self, item: QListWidgetItem):
-        """
-        Internal slot triggered when an item in the QListWidget is clicked.
-        Emits the word_selected signal with the text of the clicked item.
-        """
+        """Emit word_selected(word, block_index) when a list item is clicked."""
         itemWidget = self.word_list_widget.itemWidget(item)
         selected_word = itemWidget.word
-        textblock_obj = item.data(Qt.UserRole)  # Retrieve associated textblock_obj
-        self.word_selected.emit(selected_word, textblock_obj)  # Emit the signal with both values
-        # print(f"Word clicked: {selected_word}") # Optional: for debugging
-        # self.word_selected.emit(selected_word) # Emit the signal
+        textblock_obj: int = item.data(Qt.UserRole)
+        self.word_selected.emit(selected_word, textblock_obj)
 
-    # Optional: Handler for current item changed (if using currentItemChanged signal)
-    # def _on_current_word_changed(self, current: QListWidgetItem | None, previous: QListWidgetItem | None):
-    #     if current:
-    #         selected_word = current.text()
-    #         print(f"Current word changed to: {selected_word}")
-    #         self.word_selected.emit(selected_word)
-    #     else:
-    #         print("No item selected.")
-    #         # Decide how you want to handle no selection (e.g., emit None, or empty string)
-    #         # self.word_selected.emit("") # Or emit a specific value for no selection
-
-    # You could add methods to get the currently selected word if needed
-    def get_selected_word(self) -> str | None:
-        """
-        Returns the text of the currently selected word, or None if nothing is selected.
-        """
+    def get_selected_word(self) -> str:
+        """Returns the text of the currently selected word, or empty string if nothing selected."""
         current_item = self.word_list_widget.currentItem()
         if current_item:
             return current_item.text()
-        return None
+        return ''

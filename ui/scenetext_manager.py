@@ -1,4 +1,3 @@
-
 from typing import List, Union, Tuple
 import numpy as np
 import copy
@@ -16,6 +15,7 @@ from .canvas import Canvas
 from .textedit_area import TransTextEdit, SourceTextEdit, TransPairWidget, SelectTextMiniMenu, TextEditListScrollArea, QVBoxLayout, Widget
 from utils.fontformat import FontFormat
 from .textedit_commands import propagate_user_edit, TextEditCommand, ReshapeItemCommand, MoveBlkItemsCommand, AutoLayoutCommand, ApplyFontformatCommand, RotateItemCommand, TextItemEditCommand, TextEditCommand, PageReplaceOneCommand, PageReplaceAllCommand, MultiPasteCommand, ResetAngleCommand, SqueezeCommand
+from .drawing_commands import EmptyCommand
 from .text_panel import FontFormatPanel
 from utils.config import pcfg
 from utils import shared
@@ -52,11 +52,6 @@ class CreateItemCommand(QUndoCommand):
 
     def undo(self):
         self.ctrl.deleteTextblkItemList([self.blk_item], [self.pairw])
-
-
-class EmptyCommand(QUndoCommand):
-    def __init__(self, parent=None):
-        super().__init__(parent=parent)
 
 
 class DeleteBlkItemsCommand(QUndoCommand):
@@ -223,7 +218,6 @@ class PasteBlkItemsCommand(QUndoCommand):
         self.ctrl.on_incanvas_selection_changed()
         self.ctrl.canvas.block_selection_signal = False
         self.pwidget_list = pwidget_list
-        
 
     def redo(self):
         if self.op_counter == 0:
@@ -275,7 +269,7 @@ class RearrangeBlksCommand(QUndoCommand):
     def undo(self):
         self.rearange_blk_ids(self.tgt_ids, self.src_ids, self.undo_visible_idx)
 
-    def rearange_blk_ids(self, src_ids, tgt_ids, visible_idx = None):
+    def rearange_blk_ids(self, src_ids, tgt_ids, visible_idx=None):
         src_ids = np.array(src_ids)
         tgt_ids = np.array(tgt_ids)
         src_order_ids = np.argsort(src_ids)[::-1]
@@ -297,7 +291,6 @@ class RearrangeBlksCommand(QUndoCommand):
         for ii in tgt_order_ids:
             pos = tgt_ids[ii]
             self.ctrl.textblk_item_list.insert(pos, blks[ii])
-            
             self.ctrl.textEditList.insertPairWidget(pws[ii], pos)
             self.ctrl.pairwidget_list.insert(pos, pws[ii])
 
@@ -362,7 +355,7 @@ class SceneTextManager(QObject):
         self.pairwidget_list: List[TransPairWidget] = self.textEditList.pairwidget_list
 
         self.auto_textlayout_flag = False
-        self.hovering_transwidget : TransTextEdit = None
+        self.hovering_transwidget: TransTextEdit = None
 
         self.prev_blkitem: TextBlkItem = None
 
@@ -474,9 +467,6 @@ class SceneTextManager(QObject):
             self.updateTextBlkList()
 
     def addTextBlock(self, blk: Union[TextBlock, TextBlkItem] = None) -> TextBlkItem:
-        # import debugpy
-        # debugpy.debug_this_thread()
-        # debugpy.breakpoint()
         if isinstance(blk, TextBlkItem):
             blk_item = blk
             blk_item.idx = len(self.textblk_item_list)
@@ -492,7 +482,6 @@ class SceneTextManager(QObject):
                 if rst is None:
                     blk_item.setPlainText(translation)
         self.addTextBlkItem(blk_item)
-        # LOGGER.info(f"addTextBlock {blk_item.toPlainText()}")
 
         pair_widget = TransPairWidget(blk, len(self.pairwidget_list), pcfg.fold_textarea)
         self.pairwidget_list.append(pair_widget)
@@ -506,7 +495,6 @@ class SceneTextManager(QObject):
         pair_widget.e_source.show_select_menu.connect(self.on_show_select_menu)
         pair_widget.e_source.focus_out.connect(self.on_pairw_focusout)
         pair_widget.e_source.text_changed.connect(self._on_source_text_changed)
-        # pair_widget.e_source.propagate_user_edited.connect(self.on_propagate_transwidget_edit_source)
 
         pair_widget.e_trans.setPlainText(blk_item.toPlainText())
         pair_widget.e_trans.focus_in.connect(self.on_transwidget_focus_in)
@@ -546,35 +534,13 @@ class SceneTextManager(QObject):
     def _on_source_text_changed(self):
         """
         Handles the text_changed signal from a SourceTextEdit widget.
-
-        This function retrieves the sender, updates the underlying data model with
-        the new text, and then triggers a refresh of the unknown words panel.
+        Updates the unknown words panel when source text changes.
+        The data model is kept in sync by updateTextBlkList() before save/translate.
         """
         sender = self.sender()
         if not sender:
             return
-
-        idx = sender.idx
-        new_text = sender.toPlainText()
-
-        if (len(self.imgtrans_proj.current_block_list()) <= idx):
-            print(f"current_block_list {len(self.imgtrans_proj.current_block_list())} < {idx}")
-            return
-        
-        try:
-            # 1. Update the data model (TextBlock) with the latest text.
-            #    This is a crucial first step.
-            text_block: TextBlock = self.imgtrans_proj.current_block_list()[idx]
-            text_block.text = new_text # Assumes a method like 'set_text' exists
-
-        except (IndexError, AttributeError) as e:
-            print(f"Could not update text block {idx}: {e}")
-            return
-
-        # 2. Call the new, lightweight function to update the word panel.
-        #    This is safe to call directly because it does not destroy the sender.
         self.updateUnknownWordsPanel()
-
 
     def updateUnknownWordsPanel(self):
         """
@@ -583,21 +549,14 @@ class SceneTextManager(QObject):
         more efficient than rebuilding all scene items.
         """
         words = []
-        # Iterate through the data model (the single source of truth)
-        # using enumerate to get the index, which your original code used.
         for idx, textblock in enumerate(self.imgtrans_proj.current_block_list()):
             text_segments = textblock.get_text()
             if text_segments:
-                # Create a tuple containing the text segment and its index
                 combined_item = (text_segments, idx)
                 words.append(combined_item)
         
-        # Get the list of unknown words from your engine
         unknownWords = self.SpellCheckEngine.GetUnknownWordsViaDictionaryFromList(words)
-        
-        # Update just the word panel with the new list
         self.textpanel.formatpanel.word_panel.set_words(unknownWords)
-
 
     def deleteTextblkItemList(self, blkitem_list: List[TextBlkItem], p_widget_list: List[TransPairWidget]):
         selection_changed = False
@@ -776,12 +735,8 @@ class SceneTextManager(QObject):
         self.apply_fontformat(fmt)
 
     def ensure_text_in_block(self, blkitem: TextBlkItem):
-        """
-        Убедиться, что в блоке есть текст и он отображается
-        """
         text = blkitem.toPlainText()
         if not text.strip():
-            # Если текст пустой, проверить виджет перевода
             if len(self.pairwidget_list) > blkitem.idx:
                 widget_text = self.pairwidget_list[blkitem.idx].e_trans.toPlainText()
                 if widget_text.strip():
@@ -794,7 +749,6 @@ class SceneTextManager(QObject):
         selected_blks = self.canvas.selected_text_items()
         old_html_lst, old_rect_lst, trans_widget_lst = [], [], []
         
-        # Фильтруем только горизонтальные блоки
         selected_blks = [blk for blk in selected_blks if not blk.fontformat.vertical]
         
         if len(selected_blks) > 0:
@@ -802,25 +756,21 @@ class SceneTextManager(QObject):
             
             for blkitem in selected_blks:
                 try:
-                    # Убедиться, что в блоке есть текст
                     self.ensure_text_in_block(blkitem)
                     
                     old_html_lst.append(blkitem.toHtml())
                     old_rect_lst.append(blkitem.absBoundingRect(qrect=True))
                     trans_widget_lst.append(self.pairwidget_list[blkitem.idx].e_trans)
                     
-                    # Выполнить layout
                     success = self.layout_textblk(blkitem)
                     
                     if not success:
                         LOGGER.warning(f"Layout не удался для блока {blkitem.idx}")
-                        # Fallback: оставить исходный текст с текущим размером шрифта
                         
                 except Exception as e:
                     LOGGER.error(f"Ошибка в layout для блока {blkitem.idx}: {e}")
                     continue
 
-            # Создать команду отмены
             if old_html_lst:
                 self.canvas.push_undo_command(AutoLayoutCommand(selected_blks, old_rect_lst, old_html_lst, trans_widget_lst))
 
@@ -843,7 +793,6 @@ class SceneTextManager(QObject):
                 from pathlib import Path
                 im = Image.fromarray(self.imgtrans_proj.img_array[y1:y2, x1:x2])
                 im.save(f'{Path(self.imgtrans_proj.current_img).stem}_{blkitem.idx}.png')
-
 
     def on_incanvas_selection_changed(self):
         if self.canvas.textEditMode():
@@ -869,7 +818,6 @@ class SceneTextManager(QObject):
         src_is_cjk = is_cjk(pcfg.module.translate_source)
         tgt_is_cjk = is_cjk(pcfg.module.translate_target)
 
-        # disable for vertical writing
         if blkitem.blk.vertical:
             return
 
@@ -886,66 +834,64 @@ class SceneTextManager(QObject):
         if not text.strip():
             return
 
-        # =====================================================
-        # AUTO MODE: binary search for max font fitting in block
-        # =====================================================
         if self.auto_textlayout_flag and pcfg.let_fntsize_flag == 0 and pcfg.let_autolayout_flag:
+            return self._layout_textblk_auto(blkitem, text, restore_charfmts,
+                                             blkitem.get_char_fmts() if restore_charfmts else None)
 
-            orig_rect = blkitem.absBoundingRect(qrect=True)
-            target_w = orig_rect.width()
-            target_h = orig_rect.height()
+        return self._layout_textblk_mask(blkitem, text, restore_charfmts,
+                                         blkitem.get_char_fmts() if restore_charfmts else None,
+                                         mask, bounding_rect, region_rect,
+                                         im_h, im_w, old_br, src_is_cjk, tgt_is_cjk, img)
 
-            blk_br = blkitem.blk.bounding_rect()
-            if len(blk_br) >= 4:
-                target_w = max(target_w, blk_br[2])
-                target_h = max(target_h, blk_br[3])
+    def _layout_textblk_auto(self, blkitem: TextBlkItem, text: str,
+                              restore_charfmts: bool, char_fmts) -> bool:
+        '''Auto mode: binary search for max font size fitting in block.'''
+        orig_rect = blkitem.absBoundingRect(qrect=True)
+        target_w = orig_rect.width()
+        target_h = orig_rect.height()
 
-            if target_w < 2 or target_h < 2:
-                LOGGER.warning(f"[layout_textblk] idx={blkitem.idx} target too small: "
-                               f"{target_w:.1f}x{target_h:.1f}")
-                return
+        blk_br = blkitem.blk.bounding_rect()
+        if len(blk_br) >= 4:
+            target_w = max(target_w, blk_br[2])
+            target_h = max(target_h, blk_br[3])
 
-            if restore_charfmts:
-                char_fmts = blkitem.get_char_fmts()
+        if target_w < 2 or target_h < 2:
+            LOGGER.warning(f"[layout_textblk] idx={blkitem.idx} target too small: "
+                           f"{target_w:.1f}x{target_h:.1f}")
+            return
 
-            original_size = blkitem.font().pointSizeF()
-            if original_size < 1:
-                original_size = 12.0
+        original_size = blkitem.font().pointSizeF()
+        if original_size < 1:
+            original_size = 12.0
 
-            # LOGGER.info(f"[layout_textblk] AUTO idx={blkitem.idx} text={repr(text[:60])} "
-            #              f"orig_size={original_size:.1f} target=({target_w:.1f}x{target_h:.1f})")
+        optimal_size = self._find_best_font_size(blkitem, text, target_w, target_h, original_size)
 
-            optimal_size = self._find_best_font_size(
-                blkitem, text, target_w, target_h, original_size
-            )
+        block_w = target_w * LAYOUT_BLOCK_SHRINK_W
+        blkitem.setFontSize(optimal_size)
+        blkitem.setPlainText(text)
+        blkitem.set_size(block_w, target_h, set_layout_maxsize=True)
 
-            # LOGGER.info(f"[layout_textblk] AUTO idx={blkitem.idx} optimal_size={optimal_size:.2f}pt")
+        if len(self.pairwidget_list) > blkitem.idx:
+            self.pairwidget_list[blkitem.idx].e_trans.setPlainText(text)
 
-            block_w = target_w * LAYOUT_BLOCK_SHRINK_W          # ← ДОБАВЛЕНО
-            blkitem.setFontSize(optimal_size)
-            blkitem.setPlainText(text)                                      # сначала текст
-            blkitem.set_size(block_w, target_h, set_layout_maxsize=True)    # потом размер (последним!)
+        if restore_charfmts and char_fmts is not None:
+            for cf in char_fmts:
+                cf.setFontPointSize(optimal_size)
+            self.restore_charfmts(blkitem, text, text, char_fmts)
 
-            if len(self.pairwidget_list) > blkitem.idx:
-                self.pairwidget_list[blkitem.idx].e_trans.setPlainText(text)
+        return True
 
-            if restore_charfmts:
-                for cf in char_fmts:
-                    cf.setFontPointSize(optimal_size)
-                self.restore_charfmts(blkitem, text, text, char_fmts)
-
-            final_h = blkitem.document().size().height()
-            # LOGGER.info(f"[layout_textblk] AUTO idx={blkitem.idx} FINAL font={optimal_size:.2f}pt "
-            #              f"doc_h={final_h:.1f} target_h={target_h:.1f}")
-            return True
-
-        # =====================================================
-        # ORIGINAL MODE: mask-based layout with global font size
-        # =====================================================
+    def _layout_textblk_mask(self, blkitem: TextBlkItem, text: str,
+                              restore_charfmts: bool, char_fmts,
+                              mask, bounding_rect, region_rect,
+                              im_h: int, im_w: int, old_br: list,
+                              src_is_cjk: bool, tgt_is_cjk: bool,
+                              img: np.ndarray) -> bool:
+        '''Original mask-based layout with global font size.'''
         blk_font = blkitem.font()
         fmt = blkitem.get_fontformat()
         blk_font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, fmt.letter_spacing * 100)
-        text_size_func = lambda text: get_text_size(QFontMetricsF(blk_font), text)
+        text_size_func = lambda t: get_text_size(QFontMetricsF(blk_font), t)
 
         if mask is None:
             bounding_rect = blkitem.absBoundingRect(max_h=im_h, max_w=im_w)
@@ -969,7 +915,6 @@ class SceneTextManager(QObject):
 
         wl_list = get_words_length_list(QFontMetricsF(blk_font), words)
         text_w, text_h = text_size_func(text)
-        text_area = text_w * text_h
         if tgt_is_cjk:
             line_height = int(round(fmt.line_spacing * text_size_func('X木')[1]))
         else:
@@ -979,9 +924,6 @@ class SceneTextManager(QObject):
         ref_src_lines = False
         if not blkitem.blk.src_is_vertical:
             ref_src_lines = blkitem.blk.line_coord_valid(old_br)
-
-        # No adaptive font sizing in original mode — global font kept as-is
-        resize_ratio = 1
 
         max_central_width = np.inf
         if fmt.alignment == 1:
@@ -1018,87 +960,56 @@ class SceneTextManager(QObject):
             ref_src_lines=ref_src_lines
         )
 
-        if restore_charfmts:
-            char_fmts = blkitem.get_char_fmts()
-
         ffmt = QFontMetricsF(blk_font)
         maxw = max([ffmt.horizontalAdvance(t) for t in new_text.split('\n')])
         blkitem.set_size(maxw * 1.5, xywh[3], set_layout_maxsize=True)
         blkitem.setPlainText(new_text)
         if len(self.pairwidget_list) > blkitem.idx:
             self.pairwidget_list[blkitem.idx].e_trans.setPlainText(new_text)
-        if restore_charfmts:
+        if restore_charfmts and char_fmts is not None:
             self.restore_charfmts(blkitem, text, new_text, char_fmts)
         blkitem.squeezeBoundingRect()
         return True
-
 
     def _find_best_font_size(self, blkitem: TextBlkItem, text: str,
                               target_w: float, target_h: float,
                               original_size: float) -> float:
         '''
         Binary-search the largest point size so that *text* fits within
-        target_w × target_h, measured on the REAL TextBlkItem with its
+        target_w x target_h, measured on the REAL TextBlkItem with its
         custom layout engine ACTIVE.
-
-        Key difference from previous attempts:
-        - relayout_on_changed is NOT touched (stays True)
-        - custom layout recalculates after each setFontSize/setPlainText
-        - only visual repainting and outgoing signals are suppressed
         '''
         lo = max(LAYOUT_MIN_FONT_PT, 4.0)
         hi = max(original_size * 3.0, 120.0)
         best = lo
 
-        # Apply fill ratio — text must fit within this fraction of the block
         target_w = target_w * LAYOUT_BLOCK_SHRINK_W * LAYOUT_FIT_FILL_W_RATIO
         target_h = target_h * LAYOUT_FIT_FILL_H_RATIO
 
-        # Suppress ONLY visual repainting — layout engine stays ACTIVE
         saved_repaint = getattr(blkitem, 'repaint_on_changed', None)
         if saved_repaint is not None:
             blkitem.repaint_on_changed = False
 
-        # Block outgoing signals (doc_size_changed → shape control, etc.)
-        # Internal document signals still reach the custom layout engine
         blkitem.blockSignals(True)
 
-        # LOGGER.info(f"[_find_best_font_size] idx={blkitem.idx} lo={lo:.1f} hi={hi:.1f} "
-        #              f"target=({target_w:.1f}x{target_h:.1f})")
-
         try:
-            iteration = 0
-            for iteration in range(LAYOUT_BEST_FONT_SIZE_ITERATION):
+            for _ in range(LAYOUT_BEST_FONT_SIZE_ITERATION):
                 if hi - lo < 0.1:
                     break
                 mid = (lo + hi) / 2.0
 
-                # 1. Set font size (custom layout auto-relayouts)
                 blkitem.setFontSize(mid)
-                # 2. Set text content (custom layout auto-relayouts)
                 blkitem.setPlainText(text)
-                # 3. Ensure wrapping width matches target
-                #    (called AFTER setPlainText in case it resets width)
                 blkitem.set_size(target_w, target_h, set_layout_maxsize=True)
 
-                # 4. Read actual height from the custom layout
                 doc_h = blkitem.document().size().height()
                 fits = doc_h <= target_h
-
-                # if iteration < 10:
-                #     LOGGER.debug(f"[_find_best_font_size] idx={blkitem.idx} "
-                #                  f"iter={iteration+1} mid={mid:.2f} "
-                #                  f"doc_h={doc_h:.1f} target_h={target_h:.1f} "
-                #                  f"fits={fits}")
 
                 if fits:
                     best = mid
                     lo = mid
                 else:
                     hi = mid
-
-            # LOGGER.info(f"[_find_best_font_size] idx={blkitem.idx} "
-            #              f"RESULT best={best:.2f}pt after {iteration+1} iters")
 
         finally:
             blkitem.blockSignals(False)
@@ -1343,46 +1254,24 @@ class SceneTextManager(QObject):
     def on_page_replace_all(self):
         self.canvas.push_undo_command(PageReplaceAllCommand(self.canvas.search_widget))
 
-    def on_spell_word_clicked(self, word: str, idx: object):
+    def on_spell_word_clicked(self, word: str, idx: int):
         if idx < len(self.textblk_item_list):
             blk_item = self.textblk_item_list[idx]
             self.canvas.gv.ensureVisible(blk_item)
             self.txtblkShapeControl.setBlkItem(blk_item)
-
             self.textblk_item_list[idx].setSelected(True)
-            # self.canvas.block_selection_signal = False
-
-            # selections: List[TextBlkItem] = self.canvas.selectedItems()
-            # if len(selections) > 1:
-            #     for item in selections:
-            #         item.oldPos = item.pos()
             self.changeHoveringWidget(self.pairwidget_list[idx].e_trans)
-
             self.pairwidget_list[idx].e_source.highlight_one_word(word, QColor(Qt.blue), QColor(Qt.yellow))
-
-        # self.canvas.block_selection_signal = True
-        # matched_indices = []
-        # for idx, blk_item in enumerate(self.textblk_item_list):
-        #     if word in blk_item.toPlainText():
-        #         matched_indices.append(idx)
-        #         blk_item.setSelected(True)
-        #     else:
-        #         blk_item.setSelected(False)
-
-        # self.canvas.block_selection_signal = False
-
-        # # Optional: ensure visible
-        # if matched_indices:
-        #     self.canvas.gv.ensureVisible(self.textblk_item_list[matched_indices[0]])
 
     def onWordDeleted(self, word: str):
         self.SpellCheckEngine.onWordDeleted(word)
-        self.updateSceneTextitems()
+        self.updateUnknownWordsPanel()
 
     def get_trans_edit_for_blkitem(self, idx) -> TransTextEdit:
         if 0 <= idx < len(self.pairwidget_list):
             return self.pairwidget_list[idx].e_trans
         return None
+
 
 def get_text_size(fm: QFontMetricsF, text: str) -> Tuple[int, int]:
     brt = fm.tightBoundingRect(text)
@@ -1390,13 +1279,9 @@ def get_text_size(fm: QFontMetricsF, text: str) -> Tuple[int, int]:
     return int(np.ceil(fm.horizontalAdvance(text))), int(np.ceil(brt.height()))
     
 def get_words_length_list(fm: QFontMetricsF, words: List[str]) -> List[int]:
-    # return [int(np.ceil(fm.horizontalAdvance(word))) for word in words]
     lengths = []
     for word in words:
-        # Использовать горизонтальное продвижение для более точного расчета
         length = fm.horizontalAdvance(word)
-        # Округление вверх для безопасности
         lengths.append(int(np.ceil(length)))
-    
     LOGGER.debug(f"Word lengths: {lengths} for words: {words}")
     return lengths
