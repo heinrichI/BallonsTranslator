@@ -15,7 +15,6 @@ from .canvas import Canvas
 from .textedit_area import TransTextEdit, SourceTextEdit, TransPairWidget, SelectTextMiniMenu, TextEditListScrollArea, QVBoxLayout, Widget
 from utils.fontformat import FontFormat
 from .textedit_commands import propagate_user_edit, TextEditCommand, ReshapeItemCommand, MoveBlkItemsCommand, AutoLayoutCommand, ApplyFontformatCommand, RotateItemCommand, TextItemEditCommand, TextEditCommand, PageReplaceOneCommand, PageReplaceAllCommand, MultiPasteCommand, ResetAngleCommand, SqueezeCommand
-from .drawing_commands import EmptyCommand
 from .text_panel import FontFormatPanel
 from utils.config import pcfg
 from utils import shared
@@ -486,7 +485,7 @@ class SceneTextManager(QObject):
         pair_widget = TransPairWidget(blk, len(self.pairwidget_list), pcfg.fold_textarea)
         self.pairwidget_list.append(pair_widget)
         self.textEditList.addPairWidget(pair_widget)
-        pair_widget.e_source.setPlainText(blk_item.blk.get_text())
+        self._sync_source_to_ui(blk_item)
         pair_widget.e_source.focus_in.connect(self.on_transwidget_focus_in)
         pair_widget.e_source.ensure_scene_visible.connect(self.on_ensure_textitem_svisible)
         pair_widget.e_source.push_undo_stack.connect(self.on_push_edit_stack)
@@ -496,7 +495,7 @@ class SceneTextManager(QObject):
         pair_widget.e_source.focus_out.connect(self.on_pairw_focusout)
         pair_widget.e_source.text_changed.connect(self._on_source_text_changed)
 
-        pair_widget.e_trans.setPlainText(blk_item.toPlainText())
+        self._sync_translation_to_ui(blk_item)
         pair_widget.e_trans.focus_in.connect(self.on_transwidget_focus_in)
         pair_widget.e_trans.propagate_user_edited.connect(self.on_propagate_transwidget_edit)
         pair_widget.e_trans.ensure_scene_visible.connect(self.on_ensure_textitem_svisible)
@@ -557,6 +556,18 @@ class SceneTextManager(QObject):
         
         unknownWords = self.SpellCheckEngine.GetUnknownWordsViaDictionaryFromList(words)
         self.textpanel.formatpanel.word_panel.set_words(unknownWords)
+
+    def _sync_translation_to_ui(self, blkitem: TextBlkItem) -> None:
+        """Sync TextBlock.translation → TextBlkItem + e_trans widget."""
+        text = blkitem.blk.translation
+        blkitem.setPlainText(text)
+        if len(self.pairwidget_list) > blkitem.idx:
+            self.pairwidget_list[blkitem.idx].e_trans.setPlainTextAndKeepUndoStack(text)
+
+    def _sync_source_to_ui(self, blkitem: TextBlkItem) -> None:
+        """Sync TextBlock.text → e_source widget."""
+        if len(self.pairwidget_list) > blkitem.idx:
+            self.pairwidget_list[blkitem.idx].e_source.setPlainTextAndKeepUndoStack(blkitem.blk.get_text())
 
     def deleteTextblkItemList(self, blkitem_list: List[TextBlkItem], p_widget_list: List[TransPairWidget]):
         selection_changed = False
@@ -734,17 +745,6 @@ class SceneTextManager(QObject):
             fmt = self.formatpanel.global_format
         self.apply_fontformat(fmt)
 
-    def ensure_text_in_block(self, blkitem: TextBlkItem):
-        text = blkitem.toPlainText()
-        if not text.strip():
-            if len(self.pairwidget_list) > blkitem.idx:
-                widget_text = self.pairwidget_list[blkitem.idx].e_trans.toPlainText()
-                if widget_text.strip():
-                    LOGGER.debug(f"Блок {blkitem.idx}: восстановление текста из виджета")
-                    blkitem.setPlainText(widget_text)
-                    return True
-        return False
-
     def onAutoLayoutTextblks(self):
         selected_blks = self.canvas.selected_text_items()
         old_html_lst, old_rect_lst, trans_widget_lst = [], [], []
@@ -756,8 +756,6 @@ class SceneTextManager(QObject):
             
             for blkitem in selected_blks:
                 try:
-                    self.ensure_text_in_block(blkitem)
-                    
                     old_html_lst.append(blkitem.toHtml())
                     old_rect_lst.append(blkitem.absBoundingRect(qrect=True))
                     trans_widget_lst.append(self.pairwidget_list[blkitem.idx].e_trans)
@@ -868,11 +866,11 @@ class SceneTextManager(QObject):
 
         block_w = target_w * LAYOUT_BLOCK_SHRINK_W
         blkitem.setFontSize(optimal_size)
+        blkitem.blk.translation = text
         blkitem.setPlainText(text)
         blkitem.set_size(block_w, target_h, set_layout_maxsize=True)
 
-        if len(self.pairwidget_list) > blkitem.idx:
-            self.pairwidget_list[blkitem.idx].e_trans.setPlainText(text)
+        self._sync_translation_to_ui(blkitem)
 
         if restore_charfmts and char_fmts is not None:
             for cf in char_fmts:
@@ -896,9 +894,8 @@ class SceneTextManager(QObject):
         if mask is None:
             bounding_rect = blkitem.absBoundingRect(max_h=im_h, max_w=im_w)
             if bounding_rect[2] <= 0 or bounding_rect[3] <= 0:
-                blkitem.setPlainText(text)
-                if len(self.pairwidget_list) > blkitem.idx:
-                    self.pairwidget_list[blkitem.idx].e_trans.setPlainText(text)
+                blkitem.blk.translation = text
+                self._sync_translation_to_ui(blkitem)
                 return
             if tgt_is_cjk:
                 max_enlarge_ratio = 2.5
@@ -963,9 +960,8 @@ class SceneTextManager(QObject):
         ffmt = QFontMetricsF(blk_font)
         maxw = max([ffmt.horizontalAdvance(t) for t in new_text.split('\n')])
         blkitem.set_size(maxw * 1.5, xywh[3], set_layout_maxsize=True)
-        blkitem.setPlainText(new_text)
-        if len(self.pairwidget_list) > blkitem.idx:
-            self.pairwidget_list[blkitem.idx].e_trans.setPlainText(new_text)
+        blkitem.blk.translation = new_text
+        self._sync_translation_to_ui(blkitem)
         if restore_charfmts and char_fmts is not None:
             self.restore_charfmts(blkitem, text, new_text, char_fmts)
         blkitem.squeezeBoundingRect()
@@ -1223,9 +1219,8 @@ class SceneTextManager(QObject):
             cbl.append(blk_item.blk)
 
     def updateTranslation(self):
-        for blk_item, transwidget in zip(self.textblk_item_list, self.pairwidget_list):
-            transwidget.e_trans.setPlainText(blk_item.blk.translation)
-            blk_item.setPlainText(blk_item.blk.translation)
+        for blk_item in self.textblk_item_list:
+            self._sync_translation_to_ui(blk_item)
         self.canvas.clear_text_stack()
 
     def showTextblkItemRect(self, draw_rect: bool):
@@ -1283,5 +1278,4 @@ def get_words_length_list(fm: QFontMetricsF, words: List[str]) -> List[int]:
     for word in words:
         length = fm.horizontalAdvance(word)
         lengths.append(int(np.ceil(length)))
-    LOGGER.debug(f"Word lengths: {lengths} for words: {words}")
     return lengths

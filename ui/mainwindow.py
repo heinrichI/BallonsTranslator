@@ -38,9 +38,6 @@ from .drawing_commands import RunBlkTransCommand
 from .keywordsubwidget import KeywordSubWidget
 from . import shared_widget as SW
 from .custom_widget import MessageBox, FrameLessMessageBox, ImgtransProgressMessageBox
-# from utils.SpellCheckEngine import SpellCheckEngine
-# from .SpellCheckDialog import SpellCheckDialog
-
 class PageListView(QListWidget):
 
     reveal_file = Signal()

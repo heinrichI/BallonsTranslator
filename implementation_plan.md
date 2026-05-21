@@ -1,134 +1,82 @@
 # Implementation Plan
 
 [Overview]
-Refactor the BallonsTranslator UI layer to improve code quality, maintainability, and correctness without changing external behaviour.
+Eliminate the three-way text duplication across TextBlock (data model), TextBlkItem (canvas scene item), and TransPairWidget (right panel) by introducing sync methods that make TextBlock the single source of truth for translation and source text.
 
-This plan addresses accumulated technical debt in the UI layer, primarily introduced during the SpellCheck3 feature (`87fcbe1`) and the AutoFontSize work. The codebase has three main pain points: (1) dead/commented-out code bloating key files, (2) architectural issues where Qt undo commands mutate state in their constructors and where a deleted-word handler triggers a full UI rebuild, and (3) an overly complex `layout_textblk()` function that handles two fundamentally different modes in one 170-line body. No external behaviour changes are intended; existing functionality must remain identical after each step.
+The core problem: translation text is stored and synchronised in three places — `TextBlkItem.toPlainText()/toHtml()` (canvas), `TransPairWidget.e_trans.toPlainText()` (right panel), and `TextBlock.translation/rich_text` (JSON model). Source text is duplicated between `TransPairWidget.e_source.toPlainText()` and `TextBlock.text`. Synchronisation code is scattered across `layout_textblk()`, `RunBlkTransCommand`, `updateTextBlkList()`, `updateTranslation()`, and `addTextBlock()`.
+
+The solution introduces `_sync_translation_to_ui(blkitem)` and `_sync_source_to_ui(blkitem)` on `SceneTextManager` that write `TextBlock.translation` → `TextBlkItem.setPlainText()` + `e_trans.setPlainTextAndKeepUndoStack()`, and `TextBlock.text` → `e_source.setPlainTextAndKeepUndoStack()`. All direct widget writes are replaced with sync calls. `RunBlkTransCommand` is simplified to only save/restore `TextBlock.translation` and call the sync method. Undo/redo continues working via the widgets' own undo stacks.
+
+Secondary cleanups: remove `ensure_text_in_block()`, remove `LOGGER.debug` from `get_words_length_list()` loop, remove duplicate `EmptyCommand` from `drawing_commands.py`.
 
 [Types]
-No new types are introduced; existing type annotations are corrected.
-
-Corrections needed:
-- `WordListPanel.set_words(words: List[str])` — actual argument type is `List[Tuple[str, int]]`, not `List[str]`. Change annotation to `List[Tuple[str, int]]`.
-- `WordListPanel.word_selected = Signal(str, object)` — the `object` is always `int` (block index). Change to `Signal(str, int)`.
-- `SceneTextManager.on_spell_word_clicked(self, word: str, idx: object)` — `idx` is always `int`. Change annotation to `int`.
+No new types or type changes.
 
 [Files]
-Files modified and new files created in this refactor.
 
 **Modified files:**
-- `ui/scenetext_manager.py` — remove duplicate `EmptyCommand`, fix `onWordDeleted`, simplify `_on_source_text_changed`, split `layout_textblk()` into dispatcher + two private methods, fix type annotations
-- `ui/drawing_commands.py` — move auto-layout state mutation out of `RunBlkTransCommand.__init__` into `redo()`; keep `EmptyCommand` here as the single definition
-- `ui/text_advanced_format.py` — remove commented-out code blocks in `WordListPanel`; fix type annotations on `set_words`, `word_selected`, `add_word_item`
-- `utils/spell_check_engine.py` — remove ~200 lines of commented-out legacy code; keep only active methods
-- `ui/mainwindow.py` — remove commented-out SpellCheck block (lines 1503–1542) and related dead imports/comments
-
-**New files:**
-- `tests/test_spell_check_engine.py` — unit tests for `SpellCheckEngine` (no Qt dependency)
-- `tests/test_textblock.py` — unit tests for `TextBlock` data model
-- `tests/test_layout_utils.py` — unit tests for `get_text_size` helper and `get_words_length_list`
+- `ui/scenetext_manager.py` — add `_sync_translation_to_ui()` and `_sync_source_to_ui()` methods; replace all direct `e_trans.setPlainText()`, `e_source.setPlainText()`, `blkitem.setPlainText()` writes with sync calls; remove `ensure_text_in_block()`; update `addTextBlock`, `_layout_textblk_auto`, `_layout_textblk_mask`, `updateTranslation`
+- `ui/drawing_commands.py` — simplify `RunBlkTransCommand._apply_text_state()` to only set `blk.blk.translation` and rely on sync from caller; remove duplicate `EmptyCommand` class (already exists in `scenetext_manager` import from `drawing_commands`)
 
 [Functions]
-Functions modified and new functions added.
-
-**Modified functions:**
-
-- `SceneTextManager.onWordDeleted(word: str)` in `ui/scenetext_manager.py`
-  - Current: calls `self.updateSceneTextitems()` — full UI rebuild
-  - Change: call `self.updateUnknownWordsPanel()` instead
-
-- `SceneTextManager._on_source_text_changed()` in `ui/scenetext_manager.py`
-  - Current: manually sets `textblock.text = new_text` (duplicates `updateTextBlkList` logic) then calls `updateUnknownWordsPanel()`
-  - Change: remove the manual model update; just call `updateUnknownWordsPanel()` directly. The model is already kept in sync by `updateTextBlkList()` before save/translate
-
-- `SceneTextManager.layout_textblk(...)` in `ui/scenetext_manager.py`
-  - Current: 170-line function with two modes selected by `if self.auto_textlayout_flag and ...`
-  - Change: keep `layout_textblk` as a thin dispatcher that calls either `_layout_textblk_auto` or `_layout_textblk_mask`
-
-- `RunBlkTransCommand.__init__(...)` in `ui/drawing_commands.py`
-  - Current: applies layout changes (setFontSize, setPlainText, set_size, setPlainTextAndKeepUndoStack) directly in `__init__`
-  - Change: `__init__` only saves old state (old_html, old_font_size, old_rect, old_text); actual application is moved to `redo()`
-
-- `RunBlkTransCommand.redo()` in `ui/drawing_commands.py`
-  - Change: add the state-application logic previously in `__init__`; first call skips reapplication (op_counter guard, same pattern already used in other commands)
-
-- `WordListPanel.set_words(words)` in `ui/text_advanced_format.py`
-  - Fix type annotation: `List[Tuple[str, int]]`
 
 **New functions:**
 
-- `SceneTextManager._layout_textblk_auto(blkitem, text, restore_charfmts, char_fmts)` in `ui/scenetext_manager.py`
-  - Extracted auto-mode body from `layout_textblk`; returns `True` on success
+- `SceneTextManager._sync_translation_to_ui(blkitem: TextBlkItem)` in `ui/scenetext_manager.py`
+  - Reads `blkitem.blk.translation`
+  - Writes to `blkitem.setPlainText(blkitem.blk.translation)`
+  - Writes to `pairwidget_list[blkitem.idx].e_trans.setPlainTextAndKeepUndoStack(blkitem.blk.translation)`
 
-- `SceneTextManager._layout_textblk_mask(blkitem, text, restore_charfmts, char_fmts, mask, bounding_rect, region_rect)` in `ui/scenetext_manager.py`
-  - Extracted mask-based mode body from `layout_textblk`; returns `True` on success
+- `SceneTextManager._sync_source_to_ui(blkitem: TextBlkItem)` in `ui/scenetext_manager.py`
+  - Reads `blkitem.blk.get_text()`
+  - Writes to `pairwidget_list[blkitem.idx].e_source.setPlainTextAndKeepUndoStack(blkitem.blk.get_text())`
 
-[Classes]
-No new classes. One class receives annotation fixes.
+**Modified functions:**
 
-**Modified classes:**
+- `SceneTextManager._layout_textblk_auto(blkitem, text, ...)` — replace `blkitem.setPlainText(text)` + `e_trans.setPlainText(text)` with `blkitem.blk.translation = text` + `_sync_translation_to_ui(blkitem)` (after measurement loop, not inside it — the loop uses blockSignals so it's safe)
+- `SceneTextManager._layout_textblk_mask(blkitem, text, ...)` — replace `blkitem.setPlainText(new_text)` + `e_trans.setPlainText(new_text)` with `blkitem.blk.translation = new_text` + `_sync_translation_to_ui(blkitem)`
+- `SceneTextManager.addTextBlock(blk)` — replace `pair_widget.e_source.setPlainText(blk_item.blk.get_text())` with `_sync_source_to_ui(blk_item)`; replace `pair_widget.e_trans.setPlainText(blk_item.toPlainText())` with `_sync_translation_to_ui(blk_item)`
+- `SceneTextManager.updateTranslation()` — replace `transwidget.e_trans.setPlainText(blk_item.blk.translation)` + `blk_item.setPlainText(blk_item.blk.translation)` with `_sync_translation_to_ui(blk_item)` for each block
+- `RunBlkTransCommand._apply_text_state()` in `ui/drawing_commands.py` — simplify: remove direct `blkitem.setPlainText`, `blkitem.setFontSize`, `blkitem.set_size`, `transpairw.e_trans.setPlainTextAndKeepUndoStack` calls. Set `blk.blk.translation = trs` and store layout_data. `redo()` calls `_sync_translation_to_ui` after `_apply_text_state()`. `undo()` restores `blk.blk.translation` from saved state and calls `_sync_translation_to_ui`.
+- `get_words_length_list()` in `ui/scenetext_manager.py` — remove the `LOGGER.debug` line from the loop
 
-- `WordListPanel` in `ui/text_advanced_format.py`
-  - Remove ~25 lines of commented-out `_adjust_size` / `adjust_panel_height` code
-  - Fix `word_selected` signal type: `Signal(str, int)`
-  - Fix `add_word_item(word: str, textblock_obj: int)` annotation
+**Removed functions:**
+- `SceneTextManager.ensure_text_in_block(blkitem)` — remove entirely; its purpose was a workaround for desync between blkitem and e_trans
 
-- `SpellCheckEngine` in `utils/spell_check_engine.py`
-  - Remove all commented-out legacy methods (`UnknownWords`, `Handle`, `GetUnknownWordsViaDictionary`, `CountUnknownWordsViaDictionary`, etc.) — approximately 200 lines
-  - Active public API remains: `__init__`, `DoSuggest`, `GetUnknownWordsViaDictionaryFromList`, `onWordDeleted`, `is_number`, `_load_data`, `_save_data`
+**Removed classes (modified):**
+- `EmptyCommand` in `ui/drawing_commands.py` — remove the class definition (it's only used via import in `scenetext_manager.py` which already imports from `drawing_commands`)
 
 [Dependencies]
 No new dependencies. No changes to `requirements.txt`.
 
-Tests use only `pytest` (already available) and mock standard library for file I/O in spell check tests.
-
 [Testing]
-Tests cover the pure-Python logic that has no Qt dependency.
 
-**`tests/test_spell_check_engine.py`:**
-- `test_is_number` — verify numeric strings are classified as numbers
-- `test_known_word_not_flagged` — common English words pass lookup (requires dictionary files; skip if not downloaded)
-- `test_skipped_word_ignored` — words in `skipped_words` are not returned as unknown
-- `test_save_load_roundtrip` — `_save_data` / `_load_data` persists and restores `skipped_words`
-- `test_on_word_deleted_adds_to_skipped` — `onWordDeleted` appends to `skipped_words`
-- `test_get_unknown_words_empty_input` — empty list returns empty result
-- `test_get_unknown_words_strips_punctuation` — punctuation stripped before lookup
-
-**`tests/test_textblock.py`:**
-- `test_textblock_get_text_single` — `get_text()` with single string in list
-- `test_textblock_get_text_multiple` — `get_text()` joins multiple lines
-- `test_textblock_adjust_pos` — `adjust_pos` shifts coordinates correctly
-- `test_bounding_rect` — `bounding_rect()` returns xywh from xyxy
-
-**`tests/test_layout_utils.py`:**
-- These require a QApplication; use `pytest-qt` fixture or skip if Qt unavailable
-- `test_get_text_size_nonempty` — returns positive width and height
-- `test_get_words_length_list_count` — output length equals input word count
-- `test_get_words_length_list_positive` — all lengths > 0 for non-empty words
+Manual testing required:
+- Auto-layout text blocks: verify e_trans and blkitem stay in sync
+- Mask-based layout text blocks: verify e_trans and blkitem stay in sync  
+- Undo/redo of `RunBlkTransCommand`: verify text state restores correctly
+- Saving/loading projects: verify `updateTextBlkList()` captures correct state
+- `updateSceneTextitems()`: verify all widgets rebuild with correct text
+- Source text editing: verify e_source changes propagate correctly
+- Spell check word panel: verify unknown words list still works
 
 [Implementation Order]
 Steps ordered to minimise risk — each step leaves the codebase in a working state.
 
-1. Remove duplicate `EmptyCommand` from `scenetext_manager.py`; add import from `drawing_commands.py`. Verify no runtime import errors.
+1. Add `_sync_translation_to_ui()` and `_sync_source_to_ui()` to `scenetext_manager.py`. Verify they compile.
 
-2. Remove commented-out dead code from `utils/spell_check_engine.py` (~200 lines). No behaviour change.
+2. Replace direct `e_trans.setPlainText` + `blkitem.setPlainText` in `_layout_textblk_auto()` with `blkitem.blk.translation = text` + `_sync_translation_to_ui(blkitem)` (after the font-size binary search loop — the loop internally uses blockSignals so it's safe).
 
-3. Remove commented-out SpellCheck block from `ui/mainwindow.py` (lines 1503–1542) and associated dead import comments.
+3. Replace direct `e_trans.setPlainText` + `blkitem.setPlainText` in `_layout_textblk_mask()` with `blkitem.blk.translation = new_text` + `_sync_translation_to_ui(blkitem)`.
 
-4. Remove commented-out code from `ui/text_advanced_format.py` (`WordListPanel.adjust_panel_height` comments). Fix type annotations on `set_words`, `word_selected`, `add_word_item`, `_on_word_clicked`.
+4. Replace direct widget sets in `addTextBlock()` with sync calls.
 
-5. Fix `SceneTextManager.onWordDeleted` — replace `updateSceneTextitems()` with `updateUnknownWordsPanel()`.
+5. Replace `updateTranslation()` body with sync loop.
 
-6. Simplify `SceneTextManager._on_source_text_changed` — remove manual `textblock.text = new_text`; just call `updateUnknownWordsPanel()`.
+6. Simplify `RunBlkTransCommand._apply_text_state()` to only save state + set `blk.blk.translation`. Remove all direct `blkitem.set*` and `transpairw.e_trans.set*` calls. After `_apply_text_state()` in `redo()`, call `_sync_translation_to_ui`. In `undo()`, restore `blk.blk.translation` from saved layout_data and call `_sync_translation_to_ui`.
 
-7. Fix `SceneTextManager.on_spell_word_clicked` type annotation (`idx: int`).
+7. Remove `ensure_text_in_block()` method.
 
-8. Split `layout_textblk()` into `_layout_textblk_auto()` and `_layout_textblk_mask()`; leave `layout_textblk` as dispatcher. Verify auto-layout and manual layout still work.
+8. Remove `LOGGER.debug` from `get_words_length_list()` loop.
 
-9. Refactor `RunBlkTransCommand.__init__` to only save state; move application logic to `redo()` with op_counter guard.
-
-10. Write `tests/test_spell_check_engine.py` with mocked file I/O and optional dictionary tests.
-
-11. Write `tests/test_textblock.py`.
-
-12. Write `tests/test_layout_utils.py`.
+9. Remove `EmptyCommand` class definition from `drawing_commands.py` (it's only used via import).

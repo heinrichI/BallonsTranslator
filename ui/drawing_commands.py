@@ -76,19 +76,9 @@ class InpaintUndoCommand(QUndoCommand):
         self.canvas.updateLayers()
 
 
-class EmptyCommand(QUndoCommand):
-    def __init__(self, parent=None):
-        super().__init__(parent=parent)
-    
-
 class RunBlkTransCommand(QUndoCommand):
     def __init__(self, canvas: Canvas, blkitems: List[TextBlkItem], transpairw_list: List[TransPairWidget], mode: int, st_manager=None):
         super().__init__()
-
-        self.empty_command = None
-        if mode > 1:
-            self.empty_command = EmptyCommand()
-            canvas.push_draw_command(self.empty_command)
 
         self.op_counter = -1
         self.blkitems = blkitems
@@ -130,7 +120,9 @@ class RunBlkTransCommand(QUndoCommand):
                     self.num_inpainted += 1
 
     def _apply_text_state(self) -> None:
-        """Apply (or re-apply) text state for all blocks.  Called from redo()."""
+        """Compute and save layout state for all blocks. Called from redo().
+        Only sets blk.blk.translation; UI sync is done by caller.
+        """
         st_manager = self.st_manager
         mode = self.mode
         first_call = len(self.layout_data) == 0
@@ -175,7 +167,6 @@ class RunBlkTransCommand(QUndoCommand):
                         blkitem.setFontSize(optimal_size)
                         blkitem.setPlainText(trs)
                         blkitem.set_size(block_w, target_h, set_layout_maxsize=True)
-                        transpairw.e_trans.setPlainTextAndKeepUndoStack(trs)
                         self.layout_data.append({
                             'old_html': old_html,
                             'old_font_size': old_font_size,
@@ -189,18 +180,11 @@ class RunBlkTransCommand(QUndoCommand):
                         layout_ok = True
 
                     if not layout_ok:
-                        transpairw.e_trans.setPlainTextAndKeepUndoStack(trs)
-                        blkitem.setPlainTextAndKeepUndoStack(trs)
                         self.layout_data.append(None)
                 else:
-                    if mode != 0:
-                        transpairw.e_trans.setPlainTextAndKeepUndoStack(trs)
-                        blkitem.setPlainTextAndKeepUndoStack(trs)
                     self.layout_data.append(None)
 
                 blkitem.blk.rich_text = ''
-                if mode >= 0:
-                    transpairw.e_source.setPlainTextAndKeepUndoStack(blkitem.blk.get_text())
             else:
                 # subsequent redo — replay via undo stacks
                 if mode != 0:
@@ -215,10 +199,15 @@ class RunBlkTransCommand(QUndoCommand):
                 if mode >= 0:
                     transpairw.e_source.redo()
 
-    def redo(self) -> None:
+    def _sync_all_blocks(self) -> None:
+        """Sync TextBlock.translation → UI for all blocks."""
+        st_manager = self.st_manager
+        if st_manager is None:
+            return
+        for blkitem in self.blkitems:
+            st_manager._sync_translation_to_ui(blkitem)
 
-        if self.empty_command is not None:
-            self.empty_command.redo()
+    def redo(self) -> None:
 
         if self.mode > 1 and self.num_inpainted > 0:
             img_array = self.canvas.imgtrans_proj.inpainted_array
@@ -237,11 +226,9 @@ class RunBlkTransCommand(QUndoCommand):
 
         if self.mode < 3:
             self._apply_text_state()
+            self._sync_all_blocks()
 
     def undo(self) -> None:
-
-        if self.empty_command is not None:
-            self.empty_command.undo()
 
         if self.mode > 1 and self.num_inpainted > 0:
             img_array = self.canvas.imgtrans_proj.inpainted_array
@@ -256,6 +243,7 @@ class RunBlkTransCommand(QUndoCommand):
             self.canvas.updateLayers()
 
         if self.mode < 3:
+            st_manager = self.st_manager
             for i, (blkitem, transpairw) in enumerate(zip(self.blkitems, self.transpairw_list)):
                 if self.mode != 0:
                     transpairw.e_trans.undo()
@@ -268,3 +256,8 @@ class RunBlkTransCommand(QUndoCommand):
                         blkitem.undo()
                 if self.mode >= 0:
                     transpairw.e_source.undo()
+                # Restore model translation from blkitem after undo
+                blkitem.blk.translation = blkitem.toPlainText()
+            if st_manager is not None:
+                for blkitem in self.blkitems:
+                    st_manager._sync_translation_to_ui(blkitem)

@@ -1,4 +1,4 @@
-from typing import Callable, List
+from typing import Callable, List, Tuple
 
 from qtpy.QtWidgets import QSizePolicy, QVBoxLayout, QPushButton, QGroupBox, QLabel, QHBoxLayout, QListWidget, QListWidgetItem, QWidget
 from qtpy.QtCore import Signal, Qt
@@ -271,7 +271,7 @@ class WordListPanel(PanelArea):
         desired_height = min(WordListPanel.WORD_LIST_PANEL_MAXH, total_height)
         self.setFixedHeight(desired_height)
 
-    def set_words(self, words: List):
+    def set_words(self, words: List[Tuple[str, int]]):
         """
         Sets the list of words to be displayed in the panel.
         Each item in *words* is a tuple of (word: str, block_index: int).
