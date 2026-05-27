@@ -46,22 +46,68 @@ class ModuleThread(QThread):
 
     def _set_module(self, module_name: str):
         old_module = self.module
+        # Prepare a lightweight init report to help diagnose failures
+        report = {
+            'module_key': self.module_key,
+            'requested_name': module_name,
+            'resolved_class': None,
+            'params': None,
+            'success': False,
+            'exception': None,
+            'timestamp': __import__('datetime').datetime.utcnow().isoformat() + 'Z'
+        }
         try:
-            module: Union[TextDetectorBase, BaseTranslator, InpainterBase, OCRBase] \
-                = self.module_register.module_dict[module_name]
-            params = cfg_module.get_params(self.module_key)[module_name]
+            # Resolve class from registry (may be None)
+            resolved = self.module_register.module_dict.get(module_name)
+            report['resolved_class'] = resolved.__name__ if resolved is not None else None
+
+            try:
+                params = cfg_module.get_params(self.module_key)[module_name]
+            except Exception:
+                params = None
+            # Serialize params safely for report
+            try:
+                report['params'] = repr(params)
+            except Exception:
+                report['params'] = str(params)
+
+            LOGGER.debug(f"Attempting to set module {self.module_key} -> {module_name}; registry keys: {list(self.module_register.module_dict.keys())}")
+
+            module = resolved
             if params is not None:
                 self.module = module(**params)
             else:
                 self.module = module()
+
+            # If configured to load models immediately, capture errors during load_model
             if not pcfg.module.load_model_on_demand:
-                self.module.load_model()
+                try:
+                    self.module.load_model()
+                except Exception as e:
+                    import traceback as _tb
+                    report['exception'] = _tb.format_exc()
+                    report['success'] = False
+                    LOGGER.error(f"Module {module_name} load_model failed: {report['exception']}")
+                    # Revert to old module (existing behavior) and show dialog
+                    self.module = old_module
+                    create_error_dialog(e, self._failed_set_module_msg)
+                    self.module_init_report = report
+                    self.finish_set_module.emit()
+                    return
+
             if old_module is not None:
                 del old_module
+
+            report['success'] = True
         except Exception as e:
+            import traceback as _tb
+            report['exception'] = _tb.format_exc()
             self.module = old_module
+            LOGGER.error(f"Failed to set module {module_name}: {report['exception']}")
             create_error_dialog(e, self._failed_set_module_msg)
 
+        # Persist last init report on the thread for higher-level diagnostics
+        self.module_init_report = report
         self.finish_set_module.emit()
 
     def pipeline_finished(self):
@@ -370,8 +416,22 @@ class ImgtransThread(QThread):
             blk_removed: List[TextBlock] = []
             if cfg_module.enable_detect:
                 try:
-                    mask, blk_list = self.textdetector.detect(img, self.imgtrans_proj, imgname)
-                    need_save_mask = True
+                    if self.textdetector is None:
+                        # Diagnostic: textdetector not initialized
+                        last_report = getattr(self.textdetect_thread, 'module_init_report', None)
+                        registry_keys = list(TEXTDETECTORS.module_dict.keys())
+                        msg = self.tr('Text detector not initialized. See logs for details.')
+                        diag = {
+                            'registry_keys': registry_keys,
+                            'last_init_report': last_report
+                        }
+                        LOGGER.error(f"Text detector is None when processing {imgname}; diagnostics: {diag}")
+                        create_error_dialog(Exception(msg), self.tr('Text Detection Failed.'), 'TextDetectFailed')
+                        blk_list = []
+                        mask = None
+                    else:
+                        mask, blk_list = self.textdetector.detect(img, self.imgtrans_proj, imgname)
+                        need_save_mask = True
                 except Exception as e:
                     create_error_dialog(e, self.tr('Text Detection Failed.'), 'TextDetectFailed')
                     blk_list = []
