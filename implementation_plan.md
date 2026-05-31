@@ -1,130 +1,120 @@
 # Implementation Plan
 
 [Overview]
-Add focused debugging and instrumentation to discover why ModuleManager.textdetector is None at pipeline runtime and produce actionable fixes; the plan limits changes to non-invasive logging + small guards, then runs targeted tests.
+Implement a backward-compatible runtime patch so the project can load PaddleOCR-VL-1.5 models with transformers >=5.x without modifying downloaded model files under data/, and add safe tests and CI checks to validate model loading and inference on CPU and GPU.
 
-This change is needed because the imgtrans pipeline calls self.textdetector.detect(...) while self.textdetector is None, causing AttributeError. The goal is to (1) gather precise runtime data (registration state, module init failures, thread lifecycle), (2) produce a reproducible minimal fix (either guard/wait or ensure proper initialization), and (3) provide tests and developer-facing diagnostics so future regressions are obvious. The approach: add structured debug logs and exception captures in module registration and ModuleThread._set_module, add a short guard/report in ModuleManager before calling detect, and add smoke tests/scripts to reproduce and validate.
+This change is needed because recent transformers versions call a method used during weight initialization (compute_default_rope_parameters) that is missing from the vendor-supplied PaddleOCR model code under data/models/... Modifying files under data/ is undesirable because they are downloaded and will be overwritten. The high-level approach is to implement a minimal, localized runtime compatibility layer inside modules/ocr/ocr_paddleVL15.py that:
+- registers a safe 'default' ROPE init function if missing,
+- monkey-patches transformers.PreTrainedModel._init_weights to detect the vendor RotaryEmbedding and perform the expected buffer initialization without editing data/,
+- keeps behaviour identical for modern transformers where compute_default_rope_parameters exists,
+- adds tests and developer scripts to validate CPU+GPU loading and a short inference smoke test.
 
 [Types]
-Add no public API type system changes; internal diagnostic data structures: a short dataclass-like dict format for module init diagnostics.
-
-Define "ModuleInitReport" (dict):
-- module_key: str (one of 'textdetector','ocr','translator','inpainter')
-- requested_name: str | None (the name requested from config)
-- resolved_class: str | None (module class name found in registry.module_dict)
-- params: dict (the params dict passed to module constructor — redact secrets)
-- success: bool
-- exception: str | None (traceback string if failed)
-- timestamp: ISO-8601 string
-
+No project-wide static type-system changes required; runtime compatibility logic uses standard typing only. Additions:
+- New internal function signatures:
+  - _compute_default_rope_parameters(config, device=None, seq_len=None, layer_type=None, **extra_kwargs) -> Tuple[Tensor, float]
+  - _patched_init_weights(self, module) -> None
 Validation rules:
-- module_key must be one of allowed keys.
-- params must be serializable (use repr for non-serializable).
-- exception length capped to 10k chars.
+- The patch must only activate when encountering RotaryEmbedding-like modules that have original_inv_freq but lack compute_default_rope_parameters.
+- Avoid altering library globals unless necessary and restore behaviour if not needed.
 
 [Files]
-Single sentence: create implementation_plan.md (this file), add logging edits to modules/base.py and utils/registry.py, add debug guards and reporting to ui/module_manager.py, and add/update developer scripts.
+Single sentence: Create a single plan file and modify only modules/ocr/ocr_paddleVL15.py; no changes to data/ files.
 
 Detailed breakdown:
 - New files to be created
-  - implementation_plan.md (root) — this plan (created).
-  - scripts/diagnose_module_init.py — developer script to print registry contents and attempt to instantiate modules from config for quick reproduction.
+  - None required. (Optionally add tests under scripts/tests/ if desired; see Testing.)
 - Existing files to be modified
-  - modules/base.py
-    - Add ModuleInitReport helper functions (serialize_params, make_report) near register_hooks/patch_module_params.
-  - utils/registry.py
-    - Add defensive logging in get() and expose a helper to list registered keys with scopes.
-  - ui/module_manager.py
-    - Add detailed logging in ModuleThread._set_module (log attempted module_name, registry keys, params, and any exception trace with ModuleInitReport emission).
-    - Emit ModuleInitReport to logger and (optionally) save last reports to ModuleManager._last_init_reports dict.
-    - Add lightweight guard in ImgtransThread._imgtrans_pipeline (or ModuleManager._imgtrans_pipeline) to detect None and raise a clearer Exception with diagnostic info instead of AttributeError.
-    - Optionally add a retry/wait-for-finish mechanism before starting pipeline when load_model_on_demand is true (non-invasive; disabled by default).
-  - launch.py (or application entry)
-    - Add a startup debug log that dumps GET_VALID_TEXTDETECTORS(), GET_VALID_OCR(), GET_VALID_TRANSLATORS(), GET_VALID_INPAINTERS() so developer sees available registrations at startup.
-  - scripts/debug_run_detector.py (existing)
-    - Update to allow printing registry keys and running setTextDetector flow manually and display ModuleInitReport results.
-- Files to be deleted or moved: none.
+  - modules/ocr/ocr_paddleVL15.py
+    - Add compatibility logic inside a single helper _ensure_default_rope() (or equivalent) that:
+      - registers a ROPE_INIT_FUNCTIONS['default'] fallback if missing.
+      - monkey-patches transformers.modeling_utils.PreTrainedModel._init_weights with a wrapper that:
+        - detects modules with "RotaryEmbedding" in their class name and attribute original_inv_freq,
+        - if module lacks compute_default_rope_parameters and module.rope_type == 'default', call ROPE_INIT_FUNCTIONS['default'] and copy inv_freq into module.inv_freq and module.original_inv_freq using torch.nn.init.copy_,
+        - otherwise delegate to original _init_weights.
+    - Keep the patch idempotent (safe to call multiple times).
+    - Ensure docstring and comment clearly note "DO NOT MODIFY data/ files; the fallback is runtime-only."
+    - Add minimal unit-test hooks (e.g., method to force installation of patch) and logging for diagnostics (module_init_report).
+- Files to be deleted or moved
+  - None.
 - Configuration file updates
-  - None required. Consider adding a runtime flag in utils/shared (DEBUG_MODULE_INIT=True) to gate verbose instrumentation.
+  - None required. Document the virtual env usage (myenv) and recommend GPU for inference in README or doc/团子OCR说明.md.
 
 [Functions]
-Single sentence: add diagnostic helpers and instrument ModuleThread._set_module and ModuleManager pipeline call sites.
+Single sentence: Introduce a small set of helper functions and a patched _init_weights wrapper.
 
 Detailed breakdown:
 - New functions
-  - make_module_init_report(module_key: str, requested_name: str, params: dict, exc: Exception|None) -> dict
-    - File: modules/base.py (near helper utilities)
-    - Purpose: Build ModuleInitReport dict (see Types).
-  - serialize_params_for_report(params: dict) -> dict
-    - File: modules/base.py
-    - Purpose: Safely convert params into JSON-serializable form (repr fallback).
-  - dump_registry_state(registry_name: str) -> dict
-    - File: utils/registry.py
-    - Purpose: Return available keys and scopes for a registry.
-  - scripts/diagnose_module_init.py: main() to run diagnostic flow.
+  - _compute_default_rope_parameters(config, device=None, seq_len=None, layer_type=None, **extra_kwargs)
+    - Location: inside modules/ocr/ocr_paddleVL15.py (scoped inside _ensure_default_rope or module scope)
+    - Purpose: compute inv_freq buffer and attention scaling fallback for models that expect this during initialization.
+    - Signature: (config, device=None, seq_len=None, layer_type=None, **extra_kwargs) -> (Tensor inv_freq, float attention_scaling)
+    - Behavior: follow transformers' expected formula: inv_freq = 1.0 / (rope_theta ** (arange(0, dim, 2) / dim)) where dim is head_dim or config.hidden_size / config.num_attention_heads.
+  - _patched_init_weights(self, module)
+    - Location: assigned to transformers.modeling_utils.PreTrainedModel._init_weights at runtime by _ensure_default_rope.
+    - Purpose: detect missing compute_default_rope_parameters on vendor RotaryEmbedding and initialize buffers using the fallback; otherwise call original.
+    - Signature: (self, module) -> None
 - Modified functions
-  - ModuleThread._set_module (exact: ui/module_manager.py, ModuleThread._set_module)
-    - Add logging at start (module_key, requested module_name, registry.module_dict keys)
-    - Wrap existing try/except to generate ModuleInitReport and log full traceback and registry state on exception, then re-raise or set module to old_module (current behavior) but retain diagnostic info.
-    - Emit finish_set_module as before.
-  - ModuleManager._imgtrans_pipeline or ImgtransThread._imgtrans_pipeline (ui/module_manager.py)
-    - Before calling self.textdetector.detect(img,...), add an explicit check:
-      - if self.textdetector is None: log error with diagnostic context (last ModuleInitReport if present), create_error_dialog with informative message "Text detector not initialized" and skip to next page rather than throw AttributeError.
-    - Alternatively, if cfg_module.load_model_on_demand is False and textdetector is None — treat as fatal and present dialog with diagnostic info.
-- Removed functions: none.
+  - PaddleOCRVL15._ensure_default_rope()
+    - File: modules/ocr/ocr_paddleVL15.py
+    - Required changes: implement the logic described above and apply the monkey patch idempotently.
+  - PaddleOCRVL15._load_model()
+    - File: modules/ocr/ocr_paddleVL15.py
+    - Required changes: call _ensure_default_rope() before instantiating AutoModel.from_pretrained(...) so that weight initialization sees the patched behaviour.
+- Removed functions
+  - None.
 
 [Classes]
-Single sentence: no new domain classes; small additions to record diagnostics stored on ModuleManager instance.
+Single sentence: No new top-level classes; behavior change is limited to runtime patching and helper functions.
 
 Detailed breakdown:
 - New classes
-  - None (use dict for ModuleInitReport).
+  - None.
 - Modified classes
-  - ModuleThread (ui/module_manager.py)
-    - _set_module: instrument to capture ModuleInitReport and store it to self.module_init_report (attribute) and emit via logger.
-  - ModuleManager (ui/module_manager.py)
-    - Add attribute _last_init_reports: Dict[str, dict] to hold latest ModuleInitReport for each module_key; populate when finish_set_module signals arrive.
-    - Update _imgtrans_pipeline error handling to consult _last_init_reports and present diagnostics in create_error_dialog call.
+  - None (no class inheritance changes). The compatibility patch operates at module-init/runtime level.
 - Removed classes
   - None.
 
 [Dependencies]
-Single sentence: no runtime dependency changes; only developer-only scripts added.
+Single sentence: No external package additions required.
 
 Details:
 - No new pip packages required.
-- Use existing utils.logger; if structured logging desired later, add or upgrade python-json-logger (not part of this minimal plan).
-- Ensure existing imports (traceback, datetime) are used; add them if missing.
+- Ensure requirement constraints:
+  - transformers >= 5.0.0 (tested with 5.9.0).
+  - torch as installed in myenv.
+- Integration requirements:
+  - Use existing myenv virtual environment for tests.
+  - Document GPU requirement for practical inference tests.
 
 [Testing]
-Single sentence: add smoke diagnostic script and run existing debug_run_detector to validate module registration and initialization flows.
+Single sentence: Add smoke tests to validate model loading and a short inference run on GPU (and a slower CPU fallback) using myenv.
 
-Test file requirements and modifications:
-- scripts/diagnose_module_init.py (new)
-  - Steps:
-    - Import modules package and utils/registry and call dump_registry_state for TEXTDETECTORS, OCR.
-    - Attempt to instantiate configured module names from pcfg.module (pcfg.module.textdetector etc.) using the ModuleThread._set_module logic (or by constructing the class directly with params).
-    - Print ModuleInitReport JSON to stdout.
-- Update scripts/debug_run_detector.py
-  - Add a --dump-registry flag to print registry contents.
-- Manual test procedure:
-  1. Run launch.py with DEBUG logging enabled (or run scripts/diagnose_module_init.py) and capture output.
-  2. Observe whether TEXTDETECTORS contains expected detectors (e.g., 'ctd' or 'stariver').
-  3. If registry lacks the expected key, inspect modules/textdetector/ for registration decorators; if keys differ (e.g. 'ctd' vs 'ctd_detector'), adjust pcfg.module.textdetector or registration.
-  4. Run the GUI pipeline in dev mode: with the added guard, the app should show a build-time dialog describing diagnostic info instead of crashing.
-- Unit tests:
-  - Not required for initial debug; add later if needed.
+Test file requirements and validation strategies:
+- scripts/test_paddleocr_fix.py (or reuse existing scripts/test_paddleocr_fix.py)
+  - Test 1: Import modules/ocr/ocr_paddleVL15.PaddleOCRVL15, call PaddleOCRVL15._ensure_default_rope(), construct PaddleOCRVL15(device='cpu'), call _load_model(), assert ocr.model exists and has attributes: visual, mlp_AR, get_rope_index. (fast)
+  - Test 2 (GPU): same test with device='cuda' if GPU available; skip with clear message if CUDA not available.
+  - Test 3 (Inference smoke): create a tiny synthetic image (English or Chinese), call ocr.ocr_img(image) and assert string returned is non-empty and not flagged as garbage.
+  - Tests should run inside myenv: myenv\Scripts\python scripts/test_paddleocr_fix.py
+- CI/local checklist:
+  - Validate that no files under data/ are modified by the patch.
+  - Confirm the monkey-patch is idempotent by running import/load twice in same process.
+  - Validate corner cases: older transformers where compute_default_rope_parameters exists—ensure behavior unchanged.
+- Logging:
+  - If model load fails, modules/ocr/ocr_paddleVL15.py should populate self.module_init_report with full traceback and file list (existing behavior) for diagnostics.
 
 [Implementation Order]
-Single sentence: implement diagnostics first (safe, reversible), run smoke diagnostics, then add minimal guard and retry behavior, and finally refine or implement permanent fix based on root cause.
+Single sentence: Implement runtime patch, add tests, validate on CPU then GPU, document and release.
 
 Numbered steps:
-1. Add helper functions in modules/base.py: serialize_params_for_report and make_module_init_report. (small, isolated)
-2. Add dump_registry_state in utils/registry.py and log registry contents at startup (launch.py). (non-invasive)
-3. Instrument ModuleThread._set_module (ui/module_manager.py) to create ModuleInitReport on both success and failure, logging full details and saving to self.module_init_report; ensure finish_set_module still emitted. (targeted)
-4. Add storage in ModuleManager to collect per-module last init reports (self._last_init_reports) and hook finish_set_module signals in setupThread to populate them. (minimal)
-5. Add guard in ImgtransThread._imgtrans_pipeline (ui/module_manager.py) before calling self.textdetector.detect: if None, call create_error_dialog with diagnostic summary and skip detection for that page; log and continue. (non-fatal)
-6. Add scripts/diagnose_module_init.py that reproduces module instantiation attempts and prints ModuleInitReport for each module_key in pcfg.module. (developer-facing)
-7. Run diagnose_module_init.py and/or start app in debug mode; inspect logs and reports to determine root cause (e.g., registry key mismatch, exception during module init due to missing model files or incorrect params).
-8. Based on findings: either fix registration/name mismatch or add robust initialization (e.g., ensure default module exists in registry, or make ModuleThread fall back to default implementation). Implement final fix as a follow-up task.
-9. Remove or gate verbose debug logs behind utils.shared.DEBUG_MODULE_INIT flag before merging.
+1. Create implementation_plan.md (this file) and commit to repository (plan only).
+2. Implement the runtime compatibility code inside modules/ocr/ocr_paddleVL15.py:
+   - Add idempotent _ensure_default_rope() that registers ROPE_INIT_FUNCTIONS['default'] fallback and patches PreTrainedModel._init_weights as described.
+   - Call _ensure_default_rope() at start of _load_model() before any AutoModel.from_pretrained calls.
+3. Add/adjust tests:
+   - Add a small smoke test script or update scripts/test_paddleocr_fix.py to cover model loading and a minimal inference call.
+4. Run tests in myenv on CPU first: myenv\Scripts\python scripts/test_paddleocr_fix.py (or run the single-file commands).
+5. Run GPU tests if CUDA available: set PaddleOCRVL15(device='cuda') and repeat the tests.
+6. Verify no files under data/ were modified and that the patch is idempotent (import & load twice).
+7. Add a short note to doc/团子OCR说明.md or README noting that the compatibility patch lives in modules/ocr/ocr_paddleVL15.py and that data/ files must not be edited.
+8. Optionally, add an automated CI job (or local script) to run the tests in a GPU-capable environment.
